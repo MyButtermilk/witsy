@@ -209,6 +209,13 @@ export type STTConfig = {
   pushToTalk: boolean
   silenceDetection: boolean
   silenceDuration: number
+    useVad?: boolean;
+  vadSensitivity?: 'low' | 'medium' | 'high';
+  vadPreRollMs?: number;
+  vadPostRollMs?: number;
+  vadMinSpeechMs?: number;
+  vadMinSilenceMs?: number;
+
   customOpenAI: {
     baseURL: string
   }
