@@ -33,6 +33,7 @@ export type WitsyEngineCreateOpts = EngineCreateOpts & {
   providerOrder?: string
 }
 
+
 export type EngineConfig = WitsyEngineCreateOpts & {
   models: ModelsConfig
   model: ModelConfig
@@ -281,6 +282,7 @@ export type RagConfig = {
   relevanceCutOff?: number
 }
 
+
 export type McpServerExtra = {
   label?: string
   state?: McpServerState
@@ -292,4 +294,5 @@ export type McpConfig = {
   mcpServersExtra: Record<string, McpServerExtra>
   smitheryApiKey: string
 }
+
 
