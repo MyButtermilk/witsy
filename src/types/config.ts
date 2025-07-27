@@ -33,6 +33,7 @@ export type WitsyEngineCreateOpts = EngineCreateOpts & {
   providerOrder?: string
 }
 
+
 export type EngineConfig = WitsyEngineCreateOpts & {
   models: ModelsConfig
   model: ModelConfig
@@ -208,6 +209,13 @@ export type STTConfig = {
   pushToTalk: boolean
   silenceDetection: boolean
   silenceDuration: number
+    useVad?: boolean;
+  vadSensitivity?: 'low' | 'medium' | 'high';
+  vadPreRollMs?: number;
+  vadPostRollMs?: number;
+  vadMinSpeechMs?: number;
+  vadMinSilenceMs?: number;
+
   customOpenAI: {
     baseURL: string
   }
@@ -281,6 +289,7 @@ export type RagConfig = {
   relevanceCutOff?: number
 }
 
+
 export type McpServerExtra = {
   label?: string
   state?: McpServerState
@@ -292,4 +301,5 @@ export type McpConfig = {
   mcpServersExtra: Record<string, McpServerExtra>
   smitheryApiKey: string
 }
+
 
