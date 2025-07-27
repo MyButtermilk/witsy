@@ -132,6 +132,12 @@
     "pushToTalk": false,
     "silenceDetection": true,
     "silenceDuration": 2000,
+    "useVad": true,
+    "vadSensitivity": "medium",
+    "vadPreRollMs": 200,
+    "vadPostRollMs": 250,
+    "vadMinSpeechMs": 150,
+    "vadMinSilenceMs": 800,
     "silenceAction": "stop_transcribe",
     "customOpenAI": {
       "baseURL": ""
