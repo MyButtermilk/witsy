@@ -21,6 +21,7 @@ export default class SonioxSTT implements STTEngine {
 
   private ws: WebSocket | null = null
   private fullTranscript: string = ''
+  private nonFinalPart: string = ''
 
   static models = [
     { id: 'stt-rt-en-v2', label: 'English (Real-time)' },
@@ -86,6 +87,7 @@ export default class SonioxSTT implements STTEngine {
       this.ws = null
     }
     this.fullTranscript = ''
+    this.nonFinalPart = ''
   }
 
   async transcribe(audioBlob: Blob): Promise<TranscribeResponse> {
@@ -192,17 +194,19 @@ export default class SonioxSTT implements STTEngine {
       this.ws.onmessage = (event) => {
         const data = JSON.parse(event.data)
         if (data.tokens && data.tokens.length > 0) {
-          let nonFinalText = ''
+          // When new tokens arrive, any previous non-final text is now implicitly final.
+          this.fullTranscript += this.nonFinalPart
+          this.nonFinalPart = ''
 
           data.tokens.forEach((token: any) => {
             if (token.is_final) {
               this.fullTranscript += token.text
             } else {
-              nonFinalText += token.text
+              this.nonFinalPart += token.text
             }
           })
 
-          callback({ type: 'text', content: this.fullTranscript + nonFinalText })
+          callback({ type: 'text', content: this.fullTranscript + this.nonFinalPart })
         }
       }
 
@@ -220,20 +224,25 @@ export default class SonioxSTT implements STTEngine {
   }
 
   async sendAudioChunk(chunk: Blob): Promise<void> {
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      try {
-        const audioData = await chunk.arrayBuffer()
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      return
+    }
+    try {
+      const audioData = await chunk.arrayBuffer()
+      // Check again after await, as the state could have changed.
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
         this.ws.send(audioData)
-      } catch (error) {
-        // silent error
       }
+    } catch (error) {
+      console.error('Soniox: Failed to send audio chunk', error)
     }
   }
 
   async endStreaming(): Promise<void> {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(new Uint8Array())
-      this.ws.close()
     }
+    // Close regardless of state to ensure cleanup handlers are called.
+    this.ws?.close()
   }
 }
