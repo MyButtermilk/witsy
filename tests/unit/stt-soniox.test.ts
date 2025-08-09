@@ -1,10 +1,11 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import STTSoniox from '../../src/voice/stt-soniox'
 import { Configuration } from '../../src/types/config'
+import { Buffer } from 'buffer'
 
 const makeConfig = (overrides: any = {}): Configuration => ({
   stt: {
-    model: 'stt-async-preview',
+    model: 'stt-rt-preview',
     vocabulary: [],
     soniox: {
       cleanup: true,
@@ -19,10 +20,38 @@ const makeConfig = (overrides: any = {}): Configuration => ({
 } as any)
 
 describe('STTSoniox', () => {
+  let mockWs: any
+
   beforeEach(() => {
     vi.restoreAllMocks()
     global.fetch = vi.fn()
+
+    mockWs = {
+      readyState: 0, // CONNECTING
+      onopen: null,
+      onmessage: null,
+      onerror: null,
+      onclose: null,
+      send: vi.fn(),
+      close: vi.fn(() => {
+        if (mockWs.onclose) {
+          mockWs.onclose()
+        }
+      }),
+    }
+
+    global.WebSocket = vi.fn(() => mockWs)
   })
+
+  // Helper to manually open the socket in tests
+  const openSocket = async (engine: STTSoniox, callback: any) => {
+    const startPromise = engine.startStreaming('stt-rt-preview', callback)
+    mockWs.readyState = 1
+    if (mockWs.onopen) {
+      mockWs.onopen()
+    }
+    await startPromise
+  }
 
   describe('transcribeFile', () => {
     it('should transcribe a file successfully', async () => {
@@ -79,58 +108,15 @@ describe('STTSoniox', () => {
   })
 
   describe('streaming', () => {
-    class MockWebSocket {
-      static instances: MockWebSocket[] = []
-      readyState = 0
-      onopen: any = () => {}
-      onmessage: any = () => {}
-      onerror: any = () => {}
-      onclose: any = () => {}
-      sentMessages: any[] = []
-
-      constructor(public url: string) {
-        MockWebSocket.instances.push(this)
-        setTimeout(() => {
-          this.readyState = 1 // OPEN
-          this.onopen()
-        }, 10)
-      }
-
-      send(data: any) {
-        this.sentMessages.push(data)
-      }
-
-      close() {
-        this.readyState = 3 // CLOSED
-        this.onclose()
-      }
-
-      receiveMessage(data: any) {
-        this.onmessage({ data: JSON.stringify(data) })
-      }
-    }
-
-    beforeEach(() => {
-      MockWebSocket.instances = []
-      global.WebSocket = MockWebSocket as any
-    })
-
     it('should connect and send configuration on startStreaming', async () => {
       const config = makeConfig()
       const engine = new STTSoniox(config)
       const callback = vi.fn()
 
-      await engine.startStreaming('stt-rt-preview', callback)
+      await openSocket(engine, callback)
 
-      expect(MockWebSocket.instances.length).toBe(1)
-      const ws = MockWebSocket.instances[0]
-      expect(ws.url).toBe('wss://stt-rt.soniox.com/transcribe-websocket')
-
-      await vi.waitFor(() => {
-        expect(ws.sentMessages.length).toBe(1)
-      })
-
-      const configMsg = JSON.parse(ws.sentMessages[0])
+      expect(mockWs.send).toHaveBeenCalledTimes(1)
+      const configMsg = JSON.parse(mockWs.send.mock.calls[0][0])
       expect(configMsg.api_key).toBe('test-api-key')
       expect(configMsg.model).toBe('stt-rt-preview')
       expect(callback).toHaveBeenCalledWith({ type: 'status', status: 'connected' })
@@ -141,47 +127,53 @@ describe('STTSoniox', () => {
       const engine = new STTSoniox(config)
       const callback = vi.fn()
 
-      await engine.startStreaming('stt-rt-preview', callback)
-      const ws = MockWebSocket.instances[0]
+      await openSocket(engine, callback)
 
-      ws.receiveMessage({ tokens: [{ text: 'Hello ', is_final: false }] })
-      expect(callback).toHaveBeenCalledWith({ type: 'text', content: 'Hello' })
+      expect(mockWs.onmessage).not.toBeNull()
 
-      ws.receiveMessage({ tokens: [{ text: 'world', is_final: true }] })
-      expect(callback).toHaveBeenCalledWith({ type: 'text', content: 'world Hello' })
+      // Non-final token
+      mockWs.onmessage({ data: JSON.stringify({ tokens: [{ text: 'Hello ', is_final: false }] }) })
+      expect(callback).toHaveBeenLastCalledWith({ type: 'text', content: 'Hello ' })
 
-      ws.receiveMessage({ tokens: [{ text: '.', is_final: true }] })
-      expect(callback).toHaveBeenCalledWith({ type: 'text', content: 'world. Hello' })
+      // Final token
+      mockWs.onmessage({ data: JSON.stringify({ tokens: [{ text: 'world', is_final: true }] }) })
+      expect(callback).toHaveBeenLastCalledWith({ type: 'text', content: 'Hello world' })
+
+      // Mix of final and non-final
+      mockWs.onmessage({ data: JSON.stringify({ tokens: [{ text: '.', is_final: true }, {text: ' How', is_final: false}] }) })
+      expect(callback).toHaveBeenLastCalledWith({ type: 'text', content: 'Hello world. How' })
     })
 
     it('should send audio chunks', async () => {
       const config = makeConfig()
       const engine = new STTSoniox(config)
-      await engine.startStreaming('stt-rt-preview', vi.fn())
-      const ws = MockWebSocket.instances[0]
+      await openSocket(engine, vi.fn())
 
-      const chunk = new Blob(['audio data'])
+      expect(mockWs.readyState).toBe(1)
+
+      const audioContent = 'audio data'
+      const chunk = new Blob([Buffer.from(audioContent)])
       await engine.sendAudioChunk(chunk)
 
-      await vi.waitFor(() => {
-        expect(ws.sentMessages.length).toBe(2) // 1 for config, 1 for audio
-      })
-      const audioData = await chunk.arrayBuffer()
-      expect(ws.sentMessages[1]).toEqual(audioData)
+      expect(mockWs.send).toHaveBeenCalledTimes(2)
+      const sentData = mockWs.send.mock.calls[1][0]
+      expect(sentData).toBeInstanceOf(ArrayBuffer)
+      const sentText = new TextDecoder().decode(sentData)
+      expect(sentText).toBe(audioContent)
     })
 
     it('should send empty binary frame on endStreaming', async () => {
       const config = makeConfig()
       const engine = new STTSoniox(config)
-      await engine.startStreaming('stt-rt-preview', vi.fn())
-      const ws = MockWebSocket.instances[0]
+      await openSocket(engine, vi.fn())
+
+      expect(mockWs.send).toHaveBeenCalledTimes(1)
+      expect(mockWs.readyState).toBe(1)
 
       await engine.endStreaming()
 
-      await vi.waitFor(() => {
-        expect(ws.sentMessages.length).toBe(2)
-      })
-      expect(ws.sentMessages[1]).toEqual(new Uint8Array())
+      expect(mockWs.send).toHaveBeenCalledTimes(2)
+      expect(mockWs.send).toHaveBeenLastCalledWith(new Uint8Array())
     })
   })
 })

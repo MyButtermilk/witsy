@@ -1,255 +1,239 @@
+import {
+  STTEngine,
+  STTEvent,
+  STTFileTranscription,
+  ProgressCallback,
+  TranscribeResponse,
+  Vocabulary
+} from './stt'
+import { Configuration } from '../types/config'
 
-import { Configuration } from 'types/config'
-import { STTEngine, ProgressCallback, TranscribeResponse, StreamingCallback, } from './stt'
+const BASE_URL = 'https://api.soniox.com/v1'
+const WEBSOCKET_URL = 'wss://stt-rt.soniox.com/transcribe-websocket'
 
-/**
- * Soniox speech‑to‑text engine (Async + Realtime).
- *
- * Async:
- *   - POST /v1/files
- *   - POST /v1/transcriptions
- *   - GET  /v1/transcriptions/{id}                          (status: queued|processing|completed|error)
- *   - GET  /v1/transcriptions/{id}/transcript               (text)
- *   - DELETE /v1/transcriptions/{id} + /v1/files/{id}       (optional cleanup)
- *
- * Realtime:
- *   - WebSocket wss://stt-rt.soniox.com/transcribe-websocket
- *   - Konfig: model, api_key, audio_format, language_hints, endpoint detection, ...
- *   - Tokens: { text: string, is_final: boolean }
- *   - EOS: leerer Binary-Frame (nicht leerer String!)
- *   - Optionale Temporary API Keys: POST /v1/auth/temporary-api-key
- */
-export default class STTSoniox implements STTEngine {
+export default class SonioxSTT implements STTEngine {
+  config: Configuration
+  name: string
+  label: string
+  logo: string
+  description: string
+  modes: ('realtime' | 'file')[]
 
-  /** Default-Modelle (können via Settings überschrieben werden) */
-  static readonly models = [
-    { id: 'stt-async-preview', label: 'Soniox Async Preview' },
-    { id: 'stt-rt-preview', label: 'Soniox Realtime Preview' },
+  private ws: WebSocket | null = null
+  private fullTranscript: string = ''
+
+  static models = [
+    { id: 'stt-rt-en-v2', label: 'English (Real-time)' },
+    { id: 'stt-rt-en-v2-low-latency', label: 'English (Real-time, Low Latency)' },
+    { id: 'stt-file-en-v2', label: 'English (File)' },
   ]
-
-  private config: Configuration
-  private ws: WebSocket | null
-  private finalTranscript = ''
-  private pendingError: string | null = null
 
   constructor(config: Configuration) {
     this.config = config
-    this.ws = null
-  }
-
-  get name(): string {
-    return 'soniox'
+    this.name = 'soniox'
+    this.label = 'Soniox'
+    this.logo = 'soniox.png'
+    this.description = 'Soniox offers both real-time and file-based transcription with high accuracy.'
+    this.modes = ['realtime', 'file']
   }
 
   isReady(): boolean {
     return true
   }
 
-  isStreamingModel(model: string): boolean {
-    return model?.startsWith('stt-rt')
+  async initialize(callback?: ProgressCallback): Promise<void> {
+    callback?.({ status: 'ready', task: 'soniox' })
+    return Promise.resolve()
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  requiresPcm16bits(model: string): boolean {
-    return false
-  }
-  
   static requiresDownload(): boolean {
     return false
   }
   
   requiresDownload(): boolean {
-    return STTSoniox.requiresDownload()
+    return SonioxSTT.requiresDownload()
   }
 
-  async initialize(callback?: ProgressCallback): Promise<void> {
-    callback?.({ status: 'ready', task: 'soniox', model: this.config.stt.model })
+  async isModelDownloaded(): Promise<boolean> {
+    return true
   }
 
-  async transcribe(audioBlob: Blob, opts?: Record<string, any>): Promise<TranscribeResponse> {
-    return this.transcribeFile(new File([audioBlob], 'audio.webm', { type: audioBlob.type }), opts)
+  async deleteModel(): Promise<void> {
+    return Promise.resolve()
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  async transcribeFile(file: File, opts?: Record<string, any>): Promise<TranscribeResponse> {
-    
-    const apiKey = this.config.engines?.soniox?.apiKey
-    if (!apiKey) throw new Error('Missing Soniox API key in settings')
-
-    const asyncModel =  this.config.stt.model || 'stt-async-preview'
-    const languageHints: string[] | undefined = this.config.stt?.soniox?.languageHints
-    const customVocabulary: string[] = this.config.stt.vocabulary?.map(v => v.text) || []
-    const audioFormat: string = this.config.stt?.soniox?.audioFormat || 'auto'
-    const cleanup = this.config.stt?.soniox?.cleanup ?? false
-
-    // 1) Upload
-    const fd = new FormData()
-    fd.append('file', file, 'audio')
-    const up = await fetch('https://api.soniox.com/v1/files', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${apiKey}` },
-      body: fd,
-    })
-    if (!up.ok) throw new Error(`Soniox file upload failed: ${up.status} ${up.statusText}`)
-    const { id: fileId } = await up.json()
-    if (!fileId) throw new Error('Soniox file upload response missing id')
-
-    // 2) Create transcription
-    const body: any = { file_id: fileId, model: asyncModel, audio_format: audioFormat }
-    if (languageHints?.length) body.language_hints = languageHints
-    if (customVocabulary?.length) body.custom_vocabulary_phrases = customVocabulary
-    const create = await fetch('https://api.soniox.com/v1/transcriptions', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    })
-    if (!create.ok) throw new Error(`Soniox transcription creation failed: ${create.status} ${create.statusText}`)
-    const { id: transcriptionId } = await create.json()
-    if (!transcriptionId) throw new Error('Soniox transcription creation response missing id')
-
-    // 3) Poll status
-    let status = 'queued'
-    let errorMessage: string | undefined
-    for (let i = 0; i < 60 && status !== 'completed' && status !== 'error'; i++) {
-      const st = await fetch(`https://api.soniox.com/v1/transcriptions/${transcriptionId}`, {
-        headers: { Authorization: `Bearer ${apiKey}` },
-      })
-      if (!st.ok) throw new Error(`Soniox transcription status failed: ${st.status} ${st.statusText}`)
-      const json = await st.json() as { status: string; error_message?: string }
-      status = json.status
-      errorMessage = json.error_message
-      if (status === 'completed' || status === 'error') break
-      await new Promise(r => setTimeout(r, 1000))
-    }
-    if (status === 'error') throw new Error(`Soniox transcription error: ${errorMessage || 'unknown error'}`)
-    if (status !== 'completed') throw new Error('Soniox transcription timed out before completion')
-
-    // 4) Get transcript
-    const tr = await fetch(`https://api.soniox.com/v1/transcriptions/${transcriptionId}/transcript`, {
-      headers: { Authorization: `Bearer ${apiKey}` },
-    })
-    if (!tr.ok) throw new Error(`Soniox get transcript failed: ${tr.status} ${tr.statusText}`)
-    const { text = '' } = await tr.json()
-
-    // 5) Cleanup
-    if (cleanup) {
-      
-      try {
-        await fetch(`https://api.soniox.com/v1/transcriptions/${transcriptionId}`, {
-          method: 'DELETE',
-          headers: { Authorization: `Bearer ${apiKey}` },
-        })
-      } catch (e) {
-        console.error('Soniox transcription DELETE failed:', e)
-      }
-      
-      try {
-        await fetch(`https://api.soniox.com/v1/files/${fileId}`, {
-          method: 'DELETE',
-          headers: { Authorization: `Bearer ${apiKey}` },
-        })
-      } catch (e) {
-        console.error('Soniox file DELETE failed:', e)
-      }
-    }
-    return { text }
+  async deleteAllModels(): Promise<void> {
+    return Promise.resolve()
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  async startStreaming(model: string, callback: StreamingCallback, opts?: Record<string, any>): Promise<void> {
-    
-    if (this.ws) return
+  isStreamingModel(model: string): boolean {
+    return model.startsWith('stt-rt-')
+  }
 
-    const apiKey = this.config.engines?.soniox?.apiKey
-    if (!apiKey) {
-      callback({ type: 'error', status: 'not_authorized', error: 'Missing Soniox API key. Please check your Soniox configuration.' })
-      return
-    }
+  private getApiKey(): string {
+    return this.config.engines.soniox?.apiKey || ''
+  }
 
-    const rtModel = model || 'stt-rt-preview'
-    const languageHints: string[] | undefined = this.config.stt?.soniox?.languageHints
-    const audioFormat: string = this.config.stt?.soniox?.audioFormat || 'auto'
-    const endpointDetection: boolean = this.config.stt?.soniox?.endpointDetection ?? false
-    const speakerDiarization: boolean = this.config.stt?.soniox?.speakerDiarization ?? false
-    const speakerDiarization: boolean = this.config.stt?.soniox?.speakerDiarization ?? false
-
-    this.finalTranscript = ''
-    this.pendingError = null
-    const url = 'wss://stt-rt.soniox.com/transcribe-websocket'
-    try {
-      this.ws = new WebSocket(url)
-    } catch (err) {
-      callback({ type: 'error', status: 'error', error: (err as Error).message })
-      return
-    }
-
-    this.ws.onopen = () => {
-      const configMsg: any = {
-        api_key: apiKey,
-        model: rtModel,
-        audio_format: audioFormat,
-        enable_endpoint_detection: endpointDetection,
-        enable_non_final_tokens: true,
+  private cleanupConnection() {
+    if (this.ws) {
+      this.ws.onopen = null
+      this.ws.onmessage = null
+      this.ws.onerror = null
+      this.ws.onclose = null
+      if (this.ws.readyState === WebSocket.OPEN) {
+        this.ws.close()
       }
-      if (languageHints?.length) configMsg.language_hints = languageHints
-      if (speakerDiarization) configMsg.enable_speaker_diarization = true
-      this.ws?.send(JSON.stringify(configMsg))
-      callback({ type: 'status', status: 'connected' })
-    }
-
-    this.ws.onmessage = (event: MessageEvent) => {
-      try {
-        const data = typeof event.data === 'string' ? JSON.parse(event.data) : null
-        if (data && Array.isArray(data.tokens)) {
-          let partial = ''
-          for (const token of data.tokens) {
-            if (token.is_final) this.finalTranscript += token.text
-            else partial += token.text
-          }
-          const content = (this.finalTranscript + partial).trim()
-          if (content) callback({ type: 'text', content })
-        }
-      } catch (e) {
-        console.error('Soniox WebSocket message handling failed:', e)
-      }
-    }
-
-    this.ws.onerror = (event: Event) => {
-      this.pendingError = (event as ErrorEvent)?.message || 'Soniox WebSocket error'
-    }
-    this.ws.onclose = () => {
-      if (this.pendingError) callback({ type: 'error', status: 'error', error: this.pendingError })
-      else callback({ type: 'status', status: 'done' })
       this.ws = null
     }
+    this.fullTranscript = ''
+  }
+
+  async transcribe(audioBlob: Blob): Promise<TranscribeResponse> {
+    const file = new File([audioBlob], 'audio.wav', { type: audioBlob.type })
+    return this.transcribeFile(file)
+  }
+
+  async transcribeFile(file: File): Promise<STTFileTranscription> {
+    const apiKey = this.getApiKey()
+    if (!apiKey) {
+      throw new Error('Missing Soniox API key in settings')
+    }
+
+    const formData = new FormData()
+    formData.append('file', file)
+    const uploadResponse = await fetch(`${BASE_URL}/files`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${apiKey}` },
+      body: formData,
+    })
+    if (!uploadResponse.ok) {
+      throw new Error(`Soniox file upload failed: ${uploadResponse.statusText}`)
+    }
+    const { id: file_id } = await uploadResponse.json()
+
+    const phrases = this.config.stt.vocabulary?.map((v: Vocabulary) => v.text).filter(v => v.trim()) || []
+    const createResponse = await fetch(`${BASE_URL}/transcriptions`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        file_id: file_id,
+        model: this.config.stt.model || 'stt-file-en-v2',
+        ...(phrases.length > 0 && { custom_vocabulary_phrases: phrases }),
+      }),
+    })
+    if (!createResponse.ok) {
+      throw new Error(`Soniox transcription creation failed: ${createResponse.statusText}`)
+    }
+    const { id: transcription_id } = await createResponse.json()
+
+    for (let retries = 0; retries < 60; retries++) {
+      const statusResponse = await fetch(`${BASE_URL}/transcriptions/${transcription_id}`, {
+        headers: { 'Authorization': `Bearer ${apiKey}` },
+      })
+      if (!statusResponse.ok) throw new Error(`Soniox status check failed: ${statusResponse.statusText}`)
+      const { status } = await statusResponse.json()
+
+      if (status === 'completed') {
+        const transcriptResponse = await fetch(`${BASE_URL}/transcriptions/${transcription_id}/transcript`, {
+          headers: { 'Authorization': `Bearer ${apiKey}` },
+        })
+        if (!transcriptResponse.ok) throw new Error(`Soniox transcript fetch failed: ${transcriptResponse.statusText}`)
+        const { text } = await transcriptResponse.json()
+
+        if (this.config.stt.soniox?.cleanup) {
+          await fetch(`${BASE_URL}/files/${file_id}`, {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${apiKey}` },
+          })
+        }
+        return { text }
+      }
+      if (status === 'failed') {
+        throw new Error('Soniox transcription failed.')
+      }
+      await new Promise(resolve => setTimeout(resolve, 1000))
+    }
+
+    throw new Error('Soniox transcription timed out.')
+  }
+
+  startStreaming(model: string, callback: (event: STTEvent) => void): Promise<void> {
+    this.cleanupConnection()
+
+    const apiKey = this.getApiKey()
+    if (!apiKey) {
+      const errorMsg = 'Missing Soniox API key in settings'
+      callback({ type: 'error', message: errorMsg })
+      return Promise.reject(new Error(errorMsg))
+    }
+
+    try {
+      this.ws = new WebSocket(WEBSOCKET_URL)
+    } catch (error) {
+      return Promise.reject(error)
+    }
+
+    return new Promise<void>((resolve, reject) => {
+      if (!this.ws) return reject('WebSocket not initialized')
+
+      this.ws.onopen = () => {
+        const phrases = this.config.stt.vocabulary?.map((v: Vocabulary) => v.text).filter(v => v.trim()) || []
+        const configMsg = {
+          api_key: apiKey,
+          model: model,
+          include_nonfinal: true,
+          ...(phrases.length > 0 && { custom_vocabulary_phrases: phrases }),
+        }
+        this.ws?.send(JSON.stringify(configMsg))
+        callback({ type: 'status', status: 'connected' })
+        resolve()
+      }
+
+      this.ws.onmessage = (event) => {
+        const data = JSON.parse(event.data)
+        if (data.tokens && data.tokens.length > 0) {
+          let nonFinalText = ''
+
+          data.tokens.forEach((token: any) => {
+            if (token.is_final) {
+              this.fullTranscript += token.text
+            } else {
+              nonFinalText += token.text
+            }
+          })
+
+          callback({ type: 'text', content: this.fullTranscript + nonFinalText })
+        }
+      }
+
+      this.ws.onerror = (error) => {
+        callback({ type: 'error', message: 'Soniox connection error' })
+        this.cleanupConnection()
+        reject(error)
+      }
+
+      this.ws.onclose = () => {
+        callback({ type: 'status', status: 'disconnected' })
+        this.cleanupConnection()
+      }
+    })
   }
 
   async sendAudioChunk(chunk: Blob): Promise<void> {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      const buf = await chunk.arrayBuffer()
-      this.ws.send(buf)
+      try {
+        const audioData = await chunk.arrayBuffer()
+        this.ws.send(audioData)
+      } catch (error) {
+        // silent error
+      }
     }
   }
 
   async endStreaming(): Promise<void> {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      // Leerer BINARY Frame (nicht leerer string!)
       this.ws.send(new Uint8Array())
+      this.ws.close()
     }
   }
-
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  async isModelDownloaded(model: string): Promise<boolean> {
-    return false
-  }
-
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  deleteModel(model: string): Promise<void> {
-    return
-  }
-
-  deleteAllModels(): Promise<void> {
-    return
-  }
-
 }

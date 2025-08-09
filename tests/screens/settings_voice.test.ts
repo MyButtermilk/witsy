@@ -87,7 +87,7 @@ test('stt settings', async () => {
   await sonioxApiKeyInput.setValue('soniox-api-key')
   await sonioxApiKeyInput.trigger('blur')
   expect(store.config.engines.soniox.apiKey).toBe('soniox-api-key')
-  expect(stt.find<HTMLSelectElement>('select[name=model]').element.value).toBe('stt-async-preview')
+  expect(stt.find<HTMLSelectElement>('select[name=model]').element.value).toBe('stt-rt-en-v2')
   const soniox2 = stt.find('select[name=model]').findAll('option')[1]
   await stt.find<HTMLSelectElement>('select[name=model]').setValue(soniox2.element.value)
   expect(store.config.stt.model).toBe(soniox2.element.value)
