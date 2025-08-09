@@ -230,8 +230,6 @@ export type STTConfig = {
     endpointDetection?: boolean
     cleanup?: boolean
     audioFormat?: string
-    proxy?: 'temporary_key' | 'proxy_stream'
-    tempKeyExpiry?: number
     speakerDiarization?: boolean
   }
   //silenceAction: SilenceAction

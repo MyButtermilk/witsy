@@ -17,14 +17,19 @@ import { STTEngine, ProgressCallback, TranscribeResponse, StreamingCallback, } f
  *   - Konfig: model, api_key, audio_format, language_hints, endpoint detection, ...
  *   - Tokens: { text: string, is_final: boolean }
  *   - EOS: leerer Binary-Frame (nicht leerer String!)
- *   - Optionale Temporary API Keys: POST /v1/auth/temporary-api-key
  */
 export default class STTSoniox implements STTEngine {
 
-  /** Default-Modelle (können via Settings überschrieben werden) */
+  /**
+   * Available "models".  Soniox differentiates between file based
+   * transcription (async REST API) and realtime transcription over a
+   * WebSocket connection.  In Witsy we expose those two modes as
+   * separate models so they can be selected via the existing model
+   * dropdown.
+   */
   static readonly models = [
-    { id: 'stt-async-preview', label: 'Soniox Async Preview' },
-    { id: 'stt-rt-preview', label: 'Soniox Realtime Preview' },
+    { id: 'stt-async-preview', label: 'File transcription' },
+    { id: 'stt-rt-preview', label: 'Realtime transcription' },
   ]
 
   private config: Configuration
@@ -76,6 +81,7 @@ export default class STTSoniox implements STTEngine {
     const languageHints: string[] | undefined = this.config.stt?.soniox?.languageHints
     const audioFormat: string = this.config.stt?.soniox?.audioFormat || 'auto'
     const cleanup = this.config.stt?.soniox?.cleanup ?? false
+    const vocabulary = this.config.stt?.vocabulary?.map(v => v.text).filter(Boolean)
 
     // 1) Upload
     const fd = new FormData()
@@ -92,6 +98,7 @@ export default class STTSoniox implements STTEngine {
     // 2) Create transcription
     const body: any = { file_id: fileId, model: asyncModel, audio_format: audioFormat }
     if (languageHints?.length) body.language_hints = languageHints
+    if (vocabulary?.length) body.custom_vocabulary = vocabulary
     const create = await fetch('https://api.soniox.com/v1/transcriptions', {
       method: 'POST',
       headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
@@ -165,27 +172,9 @@ export default class STTSoniox implements STTEngine {
     const audioFormat: string = this.config.stt?.soniox?.audioFormat || 'auto'
     const endpointDetection: boolean = this.config.stt?.soniox?.endpointDetection ?? false
     const speakerDiarization: boolean = this.config.stt?.soniox?.speakerDiarization ?? false
-    const proxyMode: string = this.config.stt?.soniox?.proxy || 'temporary_key'
-    const tempKeyExpiry: number = this.config.stt?.soniox?.tempKeyExpiry || 600
+    const vocabulary = this.config.stt?.vocabulary?.map(v => v.text).filter(Boolean)
 
-    // Temporary API Key
-    let wsApiKey = apiKey
-    if (proxyMode === 'temporary_key') {
-      try {
-        const r = await fetch('https://api.soniox.com/v1/auth/temporary-api-key', {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ usage_type: 'transcribe_websocket', expires_in_seconds: tempKeyExpiry }),
-        })
-        if (r.ok) {
-          const { api_key } = await r.json() as { api_key: string }
-          if (api_key) wsApiKey = api_key
-        }
-      } catch (e) {
-        console.error('Soniox temporary API key request failed:', e)
-      }
-    }
-
+    // connect
     this.finalTranscript = ''
     this.pendingError = null
     const url = 'wss://stt-rt.soniox.com/transcribe-websocket'
@@ -198,7 +187,7 @@ export default class STTSoniox implements STTEngine {
 
     this.ws.onopen = () => {
       const configMsg: any = {
-        api_key: wsApiKey,
+        api_key: apiKey,
         model: rtModel,
         audio_format: audioFormat,
         enable_endpoint_detection: endpointDetection,
@@ -206,6 +195,7 @@ export default class STTSoniox implements STTEngine {
       }
       if (languageHints?.length) configMsg.language_hints = languageHints
       if (speakerDiarization) configMsg.enable_speaker_diarization = true
+      if (vocabulary?.length) configMsg.custom_vocabulary = vocabulary
       this.ws?.send(JSON.stringify(configMsg))
       callback({ type: 'status', status: 'connected' })
     }
