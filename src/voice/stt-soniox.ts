@@ -24,9 +24,8 @@ export default class SonioxSTT implements STTEngine {
   private nonFinalPart: string = ''
 
   static models = [
-    { id: 'stt-rt-en-v2', label: 'English (Real-time)' },
-    { id: 'stt-rt-en-v2-low-latency', label: 'English (Real-time, Low Latency)' },
-    { id: 'stt-file-en-v2', label: 'English (File)' },
+    { id: 'realtime', label: 'Realtime Transcription' },
+    { id: 'async', label: 'Asynchronous Transcription' },
   ]
 
   constructor(config: Configuration) {
@@ -68,7 +67,7 @@ export default class SonioxSTT implements STTEngine {
   }
 
   isStreamingModel(model: string): boolean {
-    return model.startsWith('stt-rt-')
+    return model === 'realtime'
   }
 
   private getApiKey(): string {
@@ -119,7 +118,7 @@ export default class SonioxSTT implements STTEngine {
       headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         file_id: file_id,
-        model: this.config.stt.model || 'stt-file-en-v2',
+        language: this.config.stt.language || 'en',
         ...(phrases.length > 0 && { custom_vocabulary_phrases: phrases }),
       }),
     })
@@ -182,7 +181,7 @@ export default class SonioxSTT implements STTEngine {
         const phrases = this.config.stt.vocabulary?.map((v: Vocabulary) => v.text).filter(v => v.trim()) || []
         const configMsg = {
           api_key: apiKey,
-          model: model,
+          language: this.config.stt.language || 'en',
           include_nonfinal: true,
           ...(phrases.length > 0 && { custom_vocabulary_phrases: phrases }),
         }

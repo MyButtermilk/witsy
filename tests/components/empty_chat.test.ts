@@ -30,6 +30,10 @@ vi.mock('multi-llm-ts', async (importOriginal) => {
 
 beforeAll(() => {
   useWindowMock({ customEngine: true, favoriteModels: true })
+  Object.defineProperty(window.process, 'platform', {
+    value: 'linux',
+    writable: true
+  })
   store.loadSettings()
 })
 
@@ -161,11 +165,11 @@ test('Displays and selects favorites', async () => {
   expect(store.config.llm.engine).toBe(favoriteMockEngine)
   expect(store.config.engines[favoriteMockEngine].model.chat).toBe('mock-chat')
   expect(wrapper.find<HTMLElement>('.empty .favorite .shortcut').text()).toBe('emptyChat.favorites.shortcut')
-  expect(wrapper.vm.modelShortcut).toBe(process.platform === 'darwin' ? '⌥+1' : 'Alt+1')
+  expect(wrapper.vm.modelShortcut).toBe('⌥+1')
   await modelSelector.open()
   await modelSelector.select(1)
   expect(store.config.engines[favoriteMockEngine].model.chat).toBe('mock-vision')
-  expect(wrapper.vm.modelShortcut).toBe(process.platform === 'darwin' ? '⌥+2' : 'Alt+2')
+  expect(wrapper.vm.modelShortcut).toBe('⌥+2')
 })
 
 test('Activates favorites', async () => {

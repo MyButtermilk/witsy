@@ -94,11 +94,6 @@ export type LLMConfig = {
   imageResize: number
   defaults: ModelDefaults[]
   customInstructions: CustomInstruction[]
-  additionalInstructions: {
-    datetime: boolean
-    mermaid: boolean
-    artifacts: boolean
-  }
 }
 
 export type InstructionsConfig = {

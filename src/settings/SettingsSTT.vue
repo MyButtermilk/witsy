@@ -68,7 +68,7 @@
       <label>{{ t('settings.voice.model') }}</label>
       <div class="form-subgroup">
         <select name="model" v-model="model" @change="onChangeModel">
-          <option v-for="model in models" :key="model.id" :value="model.id">
+          <option v-for="model in displayedModels" :key="model.id" :value="model.id">
             {{ model.label }}
           </option>
         </select>
@@ -209,6 +209,8 @@ const duration = ref(null)
 const progress= ref<FilesProgressInfo|TaskStatus>(null)
 //const action = ref(null)
 
+const displayedModels = ref([])
+
 const models = computed(() => {
 
   // get models
@@ -221,6 +223,10 @@ const models = computed(() => {
   ]
 
 })
+
+const updateDisplayedModels = () => {
+  displayedModels.value = getSTTModels(engine.value)
+}
 
 const progressText = computed(() => {
   if (Object.keys(progress.value).length === 0) {
@@ -259,6 +265,7 @@ const load = () => {
   mistralPrompt.value = store.config.stt.mistralai?.prompt || null
   whisperGPU.value = store.config.stt.whisper.gpu ?? true
   // action.value = store.config.stt.silenceAction || 'stop_transcribe'
+  updateDisplayedModels()
 }
 
 const save = () => {
@@ -282,7 +289,13 @@ const save = () => {
 }
 
 const onChangeEngine = () => {
-  model.value = models.value.length ? models.value[0].id : ''
+  updateDisplayedModels()
+  // do not select a default model for engines that require download
+  if (requiresDownload(engine.value)) {
+    model.value = ''
+  } else {
+    model.value = displayedModels.value.length ? displayedModels.value[0].id : ''
+  }
   onChangeModel()
 }
 

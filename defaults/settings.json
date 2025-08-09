@@ -24,12 +24,7 @@
     "conversationLength": 20,
     "imageResize": 768,
     "defaults": [],
-    "customInstructions": [],
-    "additionalInstructions": {
-      "datetime": true,
-      "mermaid": true,
-      "artifacts": false
-    }
+    "customInstructions": []
   },
   "deepresearch": {
     "runtime": "ms",

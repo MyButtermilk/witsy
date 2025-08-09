@@ -226,11 +226,18 @@ test('Create command picker window', async () => {
 })
 
 test('Close command picker window', async () => {
+  const originalPlatform = process.platform;
+  Object.defineProperty(process, 'platform', {
+    value: 'darwin'
+  });
   window.openCommandPicker({ textId: 'id' })
   await window.closeCommandPicker({} as Application)
   expect(window.commandPicker).not.toBeNull()
   expect(window.commandPicker.isVisible()).toBe(false)
   expect(Menu.sendActionToFirstResponder).toHaveBeenCalled()
+  Object.defineProperty(process, 'platform', {
+    value: originalPlatform
+  });
 })
 
 test('Create prompt anywhere window', async () => {

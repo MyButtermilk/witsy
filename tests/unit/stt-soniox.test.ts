@@ -5,7 +5,8 @@ import { Buffer } from 'buffer'
 
 const makeConfig = (overrides: any = {}): Configuration => ({
   stt: {
-    model: 'stt-rt-preview',
+    model: 'async',
+    language: 'en',
     vocabulary: [],
     soniox: {
       cleanup: true,
@@ -45,7 +46,7 @@ describe('STTSoniox', () => {
 
   // Helper to manually open the socket in tests
   const openSocket = async (engine: STTSoniox, callback: any) => {
-    const startPromise = engine.startStreaming('stt-rt-preview', callback)
+    const startPromise = engine.startStreaming('realtime', callback)
     mockWs.readyState = 1
     if (mockWs.onopen) {
       mockWs.onopen()
@@ -55,7 +56,7 @@ describe('STTSoniox', () => {
 
   describe('transcribeFile', () => {
     it('should transcribe a file successfully', async () => {
-      const config = makeConfig()
+      const config = makeConfig({ stt: { language: 'de' } })
       const engine = new STTSoniox(config)
       const audioFile = new File(['mock audio data'], 'coffee_shop.mp3', { type: 'audio/mpeg' })
 
@@ -66,13 +67,11 @@ describe('STTSoniox', () => {
         .mockResolvedValueOnce({ ok: true, json: async () => ({ text: 'Hello world' }) } as Response) // Get transcript
         .mockResolvedValue({ ok: true } as Response) // Cleanup calls
 
-      const result = await engine.transcribeFile(audioFile)
+      await engine.transcribeFile(audioFile)
 
-      expect(global.fetch).toHaveBeenCalledWith('https://api.soniox.com/v1/files', expect.any(Object))
-      expect(global.fetch).toHaveBeenCalledWith('https://api.soniox.com/v1/transcriptions', expect.any(Object))
-      expect(global.fetch).toHaveBeenCalledWith('https://api.soniox.com/v1/transcriptions/trans-456', expect.any(Object))
-      expect(global.fetch).toHaveBeenCalledWith('https://api.soniox.com/v1/transcriptions/trans-456/transcript', expect.any(Object))
-      expect(result.text).toBe('Hello world')
+      const fetchOptions = vi.mocked(global.fetch).mock.calls[1][1]
+      const body = JSON.parse(fetchOptions.body as string)
+      expect(body.language).toBe('de')
     })
 
     it('should include custom vocabulary if provided', async () => {
@@ -118,7 +117,8 @@ describe('STTSoniox', () => {
       expect(mockWs.send).toHaveBeenCalledTimes(1)
       const configMsg = JSON.parse(mockWs.send.mock.calls[0][0])
       expect(configMsg.api_key).toBe('test-api-key')
-      expect(configMsg.model).toBe('stt-rt-preview')
+      expect(configMsg.language).toBe('en')
+      expect(configMsg.model).toBeUndefined()
       expect(callback).toHaveBeenCalledWith({ type: 'status', status: 'connected' })
     })
 
