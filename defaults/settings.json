@@ -155,8 +155,6 @@
       "endpointDetection": false,
       "cleanup": true,
       "audioFormat": "auto",
-      "proxy": "temporary_key",
-      "tempKeyExpiry": 600,
       "speakerDiarization": false
     }
   },

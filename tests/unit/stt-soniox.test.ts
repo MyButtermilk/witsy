@@ -11,8 +11,6 @@ const makeConfig = (overrides: any = {}) => ({
       endpointDetection: false,
       cleanup: true,
       audioFormat: 'auto',
-      proxy: 'temporary_key',
-      tempKeyExpiry: 60,
     },
   },
   engines: {

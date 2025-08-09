@@ -135,19 +135,6 @@
         <label>Cleanup after async transcription</label>
       </div> -->
 
-      <div class="form-field">
-        <label>Realtime security mode</label>
-        <select v-model="store.config.stt.soniox.proxy">
-          <option value="temporary_key">temporary_key (default)</option>
-          <option value="proxy_stream">proxy_stream (own backend proxy)</option>
-        </select>
-      </div>
-
-      <div v-if="store.config.stt.soniox.proxy === 'temporary_key'" class="form-field">
-        <label>Temporary key expiry (seconds)</label>
-        <input type="number" v-model.number="store.config.stt.soniox.tempKeyExpiry" min="30" />
-      </div>
-    
     </template>
 
     <div class="form-field">

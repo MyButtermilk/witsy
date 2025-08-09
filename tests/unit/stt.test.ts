@@ -11,6 +11,7 @@ import STTMistral from '../../src/voice/stt-mistral'
 import STTNvidia from '../../src/voice/stt-nvidia'
 import STTOpenAI from '../../src/voice/stt-openai'
 import STTSpeechmatics from '../../src/voice/stt-speechmatics'
+import STTSoniox from '../../src/voice/stt-soniox'
 import STTWhisper from '../../src/voice/stt-whisper'
 import { fal } from '@fal-ai/client'
 import { Configuration } from '../../src/types/config'
@@ -186,6 +187,7 @@ test('Requires download', () => {
   expect(requiresDownload('openai')).toBe(false)
   expect(requiresDownload('groq')).toBe(false)
   expect(requiresDownload('whisper')).toBe(true)
+  expect(requiresDownload('soniox')).toBe(false)
 })
 
 test('Instantiates OpenAI by default', async () => {
@@ -344,6 +346,22 @@ test('Instantiates Speechmatics', async () => {
   expect(engine.requiresDownload()).toBe(false)
   await engine.initialize(initCallback)
   expect(initCallback).toHaveBeenLastCalledWith({ task: 'speechmatics', status: 'ready', model: expect.any(String) })
+  await expect(engine.transcribe(new Blob())).rejects.toThrowError()
+})
+
+test('Instantiates Soniox', async () => {
+  store.config.stt.engine = 'soniox'
+  const engine = getSTTEngine(store.config)
+  expect(engine).toBeDefined()
+  expect(engine).toBeInstanceOf(STTSoniox)
+  expect(engine.isStreamingModel('stt-rt-preview')).toBe(true)
+  expect(engine).toHaveProperty('startStreaming')
+  expect(engine).toHaveProperty('sendAudioChunk')
+  expect(engine).toHaveProperty('endStreaming')
+  expect(engine.isReady()).toBe(true)
+  expect(engine.requiresDownload()).toBe(false)
+  await engine.initialize(initCallback)
+  expect(initCallback).toHaveBeenLastCalledWith({ task: 'soniox', status: 'ready', model: expect.any(String) })
   await expect(engine.transcribe(new Blob())).rejects.toThrowError()
 })
 
