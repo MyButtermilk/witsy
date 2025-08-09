@@ -70,6 +70,10 @@ export default class SonioxSTT implements STTEngine {
     return model === 'realtime'
   }
 
+  requiresPcm16bits(model: string): boolean {
+    return model === 'realtime';
+  }
+
   private getApiKey(): string {
     return this.config.engines.soniox?.apiKey || ''
   }
@@ -113,17 +117,20 @@ export default class SonioxSTT implements STTEngine {
     const { id: file_id } = await uploadResponse.json()
 
     const phrases = this.config.stt.vocabulary?.map((v: Vocabulary) => v.text).filter(v => v.trim()) || []
+    const lang = this.config.stt.locale?.substring(0, 2) || 'en';
     const createResponse = await fetch(`${BASE_URL}/transcriptions`, {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         file_id: file_id,
-        language: this.config.stt.language || 'en',
+        language: lang,
         ...(phrases.length > 0 && { custom_vocabulary_phrases: phrases }),
       }),
     })
     if (!createResponse.ok) {
-      throw new Error(`Soniox transcription creation failed: ${createResponse.statusText}`)
+      const errorBody = await createResponse.text();
+      console.error('Soniox transcription creation failed. Status:', createResponse.status, 'Body:', errorBody);
+      throw new Error(`Soniox transcription creation failed: ${createResponse.statusText}. ${errorBody}`);
     }
     const { id: transcription_id } = await createResponse.json()
 
@@ -178,10 +185,11 @@ export default class SonioxSTT implements STTEngine {
       if (!this.ws) return reject('WebSocket not initialized')
 
       this.ws.onopen = () => {
+        const lang = this.config.stt.locale?.substring(0, 2) || 'en';
         const phrases = this.config.stt.vocabulary?.map((v: Vocabulary) => v.text).filter(v => v.trim()) || []
         const configMsg = {
           api_key: apiKey,
-          language: this.config.stt.language || 'en',
+          language: lang,
           include_nonfinal: true,
           ...(phrases.length > 0 && { custom_vocabulary_phrases: phrases }),
         }

@@ -6,7 +6,7 @@ import { Buffer } from 'buffer'
 const makeConfig = (overrides: any = {}): Configuration => ({
   stt: {
     model: 'async',
-    language: 'en',
+    locale: 'en-US',
     vocabulary: [],
     soniox: {
       cleanup: true,
@@ -56,7 +56,7 @@ describe('STTSoniox', () => {
 
   describe('transcribeFile', () => {
     it('should transcribe a file successfully', async () => {
-      const config = makeConfig({ stt: { language: 'de' } })
+      const config = makeConfig({ stt: { locale: 'de-DE' } })
       const engine = new STTSoniox(config)
       const audioFile = new File(['mock audio data'], 'coffee_shop.mp3', { type: 'audio/mpeg' })
 
