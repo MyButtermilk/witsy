@@ -66,20 +66,25 @@ export default class STTSoniox implements STTEngine {
     callback?.({ status: 'ready', task: 'soniox', model: this.config.stt.model })
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async transcribe(audioBlob: Blob, opts?: Record<string, any>): Promise<TranscribeResponse> {
+    return this.transcribeFile(new File([audioBlob], 'audio.webm', { type: audioBlob.type }), opts)
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async transcribeFile(file: File, opts?: Record<string, any>): Promise<TranscribeResponse> {
     
     const apiKey = this.config.engines?.soniox?.apiKey
     if (!apiKey) throw new Error('Missing Soniox API key in settings')
 
     const asyncModel =  this.config.stt.model || 'stt-async-preview'
     const languageHints: string[] | undefined = this.config.stt?.soniox?.languageHints
+    const customVocabulary: string[] = this.config.stt.vocabulary?.map(v => v.text) || []
     const audioFormat: string = this.config.stt?.soniox?.audioFormat || 'auto'
     const cleanup = this.config.stt?.soniox?.cleanup ?? false
 
     // 1) Upload
     const fd = new FormData()
-    fd.append('file', audioBlob, 'audio')
+    fd.append('file', file, 'audio')
     const up = await fetch('https://api.soniox.com/v1/files', {
       method: 'POST',
       headers: { Authorization: `Bearer ${apiKey}` },
@@ -92,6 +97,7 @@ export default class STTSoniox implements STTEngine {
     // 2) Create transcription
     const body: any = { file_id: fileId, model: asyncModel, audio_format: audioFormat }
     if (languageHints?.length) body.language_hints = languageHints
+    if (customVocabulary?.length) body.custom_vocabulary_phrases = customVocabulary
     const create = await fetch('https://api.soniox.com/v1/transcriptions', {
       method: 'POST',
       headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
@@ -165,26 +171,7 @@ export default class STTSoniox implements STTEngine {
     const audioFormat: string = this.config.stt?.soniox?.audioFormat || 'auto'
     const endpointDetection: boolean = this.config.stt?.soniox?.endpointDetection ?? false
     const speakerDiarization: boolean = this.config.stt?.soniox?.speakerDiarization ?? false
-    const proxyMode: string = this.config.stt?.soniox?.proxy || 'temporary_key'
-    const tempKeyExpiry: number = this.config.stt?.soniox?.tempKeyExpiry || 600
-
-    // Temporary API Key
-    let wsApiKey = apiKey
-    if (proxyMode === 'temporary_key') {
-      try {
-        const r = await fetch('https://api.soniox.com/v1/auth/temporary-api-key', {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ usage_type: 'transcribe_websocket', expires_in_seconds: tempKeyExpiry }),
-        })
-        if (r.ok) {
-          const { api_key } = await r.json() as { api_key: string }
-          if (api_key) wsApiKey = api_key
-        }
-      } catch (e) {
-        console.error('Soniox temporary API key request failed:', e)
-      }
-    }
+    const speakerDiarization: boolean = this.config.stt?.soniox?.speakerDiarization ?? false
 
     this.finalTranscript = ''
     this.pendingError = null
@@ -198,7 +185,7 @@ export default class STTSoniox implements STTEngine {
 
     this.ws.onopen = () => {
       const configMsg: any = {
-        api_key: wsApiKey,
+        api_key: apiKey,
         model: rtModel,
         audio_format: audioFormat,
         enable_endpoint_detection: endpointDetection,

@@ -80,6 +80,22 @@ test('stt settings', async () => {
   await stt.find<HTMLSelectElement>('select[name=model]').setValue(groq2.element.value)
   expect(store.config.stt.model).toBe(groq2.element.value)
 
+  // soniox
+  await stt.find('select[name=engine]').setValue('soniox')
+  expect(store.config.stt.engine).toBe('soniox')
+  const sonioxApiKeyInput = stt.find('input[type=password]')
+  await sonioxApiKeyInput.setValue('soniox-api-key')
+  await sonioxApiKeyInput.trigger('blur')
+  expect(store.config.engines.soniox.apiKey).toBe('soniox-api-key')
+  expect(stt.find<HTMLSelectElement>('select[name=model]').element.value).toBe('stt-async-preview')
+  const soniox2 = stt.find('select[name=model]').findAll('option')[1]
+  await stt.find<HTMLSelectElement>('select[name=model]').setValue(soniox2.element.value)
+  expect(store.config.stt.model).toBe(soniox2.element.value)
+  const sonioxDiarization = stt.find('input[type=checkbox]')
+  await sonioxDiarization.setValue(true)
+  expect(store.config.stt.soniox.speakerDiarization).toBe(true)
+
+
   // fal.ai
   await stt.find('select[name=engine]').setValue('falai')
   expect(store.config.stt.engine).toBe('falai')
