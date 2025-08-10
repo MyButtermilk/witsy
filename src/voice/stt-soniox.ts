@@ -94,7 +94,7 @@ export default class SonioxSTT implements STTEngine {
   }
 
   async transcribe(audioBlob: Blob): Promise<TranscribeResponse> {
-    const file = new File([audioBlob], 'audio.wav', { type: audioBlob.type })
+    const file = new File([audioBlob], 'audio.webm', { type: audioBlob.type })
     return this.transcribeFile(file)
   }
 
