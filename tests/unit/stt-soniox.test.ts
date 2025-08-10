@@ -97,7 +97,7 @@ describe('STTSoniox', () => {
 
       const createFetchOpts = vi.mocked(global.fetch).mock.calls[0][1]
       const createBody = JSON.parse(createFetchOpts.body as string)
-      expect(createBody.context.custom_vocabulary).toEqual([{ phrase: 'Witsy' }, { phrase: 'Soniox' }])
+      expect(JSON.parse(createBody.context).custom_vocabulary).toEqual([{ phrase: 'Witsy' }, { phrase: 'Soniox' }])
     })
 
     it('should throw an error if API key is missing', async () => {

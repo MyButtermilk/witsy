@@ -112,9 +112,10 @@ export default class SonioxSTT implements STTEngine {
       language: lang,
     }
     if (phrases.length > 0) {
-      createBody.context = {
+      const contextObject = {
         custom_vocabulary: phrases.map(phrase => ({ phrase })),
       }
+      createBody.context = JSON.stringify(contextObject)
     }
 
     const createResponse = await fetch(`${BASE_URL}/transcriptions`, {
