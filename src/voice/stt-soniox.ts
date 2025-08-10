@@ -123,7 +123,7 @@ export default class SonioxSTT implements STTEngine {
       headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         file_id: file_id,
-        model: this.config.stt.model,
+        model: 'stt-async-preview',
         language: lang,
         ...(phrases.length > 0 && { custom_vocabulary_phrases: phrases }),
       }),
@@ -192,6 +192,7 @@ export default class SonioxSTT implements STTEngine {
           api_key: apiKey,
           language: lang,
           include_nonfinal: true,
+          audio_format: 's16le',
           ...(phrases.length > 0 && { custom_vocabulary_phrases: phrases }),
         }
         this.ws?.send(JSON.stringify(configMsg))
