@@ -94,73 +94,83 @@ export default class SonioxSTT implements STTEngine {
   }
 
   async transcribe(audioBlob: Blob): Promise<TranscribeResponse> {
-    const file = new File([audioBlob], 'audio.webm', { type: audioBlob.type })
-    return this.transcribeFile(file)
+    return this.transcribeFile(audioBlob)
   }
 
-  async transcribeFile(file: File): Promise<STTFileTranscription> {
+  async transcribeFile(audioBlob: Blob): Promise<STTFileTranscription> {
     const apiKey = this.getApiKey()
     if (!apiKey) {
       throw new Error('Missing Soniox API key in settings')
     }
 
-    const formData = new FormData()
-    formData.append('file', file)
-    const uploadResponse = await fetch(`${BASE_URL}/files`, {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${apiKey}` },
-      body: formData,
-    })
-    if (!uploadResponse.ok) {
-      throw new Error(`Soniox file upload failed: ${uploadResponse.statusText}`)
-    }
-    const { id: file_id } = await uploadResponse.json()
-
+    const lang = this.config.stt.locale?.substring(0, 2) || 'en'
     const phrases = this.config.stt.vocabulary?.map((v: Vocabulary) => v.text).filter(v => v.trim()) || []
-    const lang = this.config.stt.locale?.substring(0, 2) || 'en';
+
+    // 1. Create transcription metadata
+    const createBody: any = {
+      model: 'stt-async-preview',
+      language: lang,
+    }
+    if (phrases.length > 0) {
+      createBody.context = {
+        custom_vocabulary: phrases.map(phrase => ({ phrase })),
+      }
+    }
+
     const createResponse = await fetch(`${BASE_URL}/transcriptions`, {
       method: 'POST',
-      headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        file_id: file_id,
-        model: 'stt-async-preview',
-        language: lang,
-        ...(phrases.length > 0 && { custom_vocabulary_phrases: phrases }),
-      }),
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(createBody),
     })
+
     if (!createResponse.ok) {
-      const errorBody = await createResponse.text();
-      console.error('Soniox transcription creation failed. Status:', createResponse.status, 'Body:', errorBody);
-      throw new Error(`Soniox transcription creation failed: ${createResponse.statusText}. ${errorBody}`);
+      const errorBody = await createResponse.text()
+      console.error('Soniox transcription creation failed. Status:', createResponse.status, 'Body:', errorBody)
+      throw new Error(`Soniox transcription creation failed: ${createResponse.statusText}. ${errorBody}`)
     }
     const { id: transcription_id } = await createResponse.json()
 
+    // 2. Upload audio file
+    const uploadResponse = await fetch(`${BASE_URL}/transcriptions/${transcription_id}/audio`, {
+      method: 'PUT',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'audio/webm',
+        'Content-Length': audioBlob.size.toString(),
+      },
+      body: audioBlob,
+    })
+
+    if (!uploadResponse.ok) {
+      const errorBody = await uploadResponse.text()
+      console.error('Soniox audio upload failed. Status:', uploadResponse.status, 'Body:', errorBody)
+      throw new Error(`Soniox audio upload failed: ${uploadResponse.statusText}. ${errorBody}`)
+    }
+
+    // 3. Poll for result
     for (let retries = 0; retries < 60; retries++) {
+      await new Promise(resolve => setTimeout(resolve, 2000)) // Wait 2 seconds
+
       const statusResponse = await fetch(`${BASE_URL}/transcriptions/${transcription_id}`, {
         headers: { 'Authorization': `Bearer ${apiKey}` },
       })
-      if (!statusResponse.ok) throw new Error(`Soniox status check failed: ${statusResponse.statusText}`)
-      const { status } = await statusResponse.json()
 
-      if (status === 'completed') {
-        const transcriptResponse = await fetch(`${BASE_URL}/transcriptions/${transcription_id}/transcript`, {
-          headers: { 'Authorization': `Bearer ${apiKey}` },
-        })
-        if (!transcriptResponse.ok) throw new Error(`Soniox transcript fetch failed: ${transcriptResponse.statusText}`)
-        const { text } = await transcriptResponse.json()
+      if (!statusResponse.ok) {
+        throw new Error(`Soniox status check failed: ${statusResponse.statusText}`)
+      }
+      const statusJson = await statusResponse.json()
 
-        if (this.config.stt.soniox?.cleanup) {
-          await fetch(`${BASE_URL}/files/${file_id}`, {
-            method: 'DELETE',
-            headers: { 'Authorization': `Bearer ${apiKey}` },
-          })
-        }
+      if (statusJson.status === 'completed') {
+        const words = statusJson.words || []
+        const text = words.map((word: any) => word.text).join('')
         return { text }
       }
-      if (status === 'failed') {
-        throw new Error('Soniox transcription failed.')
+      if (statusJson.status === 'error') {
+        throw new Error(`Soniox transcription failed: ${statusJson.error_type} - ${statusJson.error_message}`)
       }
-      await new Promise(resolve => setTimeout(resolve, 1000))
     }
 
     throw new Error('Soniox transcription timed out.')
@@ -186,15 +196,25 @@ export default class SonioxSTT implements STTEngine {
       if (!this.ws) return reject('WebSocket not initialized')
 
       this.ws.onopen = () => {
-        const lang = this.config.stt.locale?.substring(0, 2) || 'en';
+        const lang = this.config.stt.locale?.substring(0, 2) || 'en'
+        const modelName = `${lang}_v2`
         const phrases = this.config.stt.vocabulary?.map((v: Vocabulary) => v.text).filter(v => v.trim()) || []
-        const configMsg = {
+
+        const configMsg: any = {
           api_key: apiKey,
-          language: lang,
+          model: modelName,
           include_nonfinal: true,
           audio_format: 's16le',
-          ...(phrases.length > 0 && { custom_vocabulary_phrases: phrases }),
+          resample_rate: 16000,
+          enable_endpoint_detection: true,
         }
+
+        if (phrases.length > 0) {
+          configMsg.context = {
+            custom_vocabulary: phrases.map(phrase => ({ phrase })),
+          }
+        }
+
         this.ws?.send(JSON.stringify(configMsg))
         callback({ type: 'status', status: 'connected' })
         resolve()
@@ -202,20 +222,17 @@ export default class SonioxSTT implements STTEngine {
 
       this.ws.onmessage = (event) => {
         const data = JSON.parse(event.data)
-        if (data.tokens && data.tokens.length > 0) {
-          // When new tokens arrive, any previous non-final text is now implicitly final.
-          this.fullTranscript += this.nonFinalPart
-          this.nonFinalPart = ''
 
-          data.tokens.forEach((token: any) => {
-            if (token.is_final) {
-              this.fullTranscript += token.text
-            } else {
-              this.nonFinalPart += token.text
-            }
-          })
+        if (data.error_message) {
+          callback({ type: 'error', message: `Soniox: ${data.error_message}` })
+          this.cleanupConnection()
+          return
+        }
 
-          callback({ type: 'text', content: this.fullTranscript + this.nonFinalPart })
+        if (data.tokens) {
+          const transcript = data.tokens.map((token: any) => token.text).join('')
+          const isFinal = data.final_audio_proc_ms > 0
+          callback({ type: 'text', content: transcript, isFinal })
         }
       }
 

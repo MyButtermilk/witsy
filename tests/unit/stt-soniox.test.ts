@@ -58,20 +58,25 @@ describe('STTSoniox', () => {
     it('should transcribe a file successfully', async () => {
       const config = makeConfig({ stt: { locale: 'de-DE' } })
       const engine = new STTSoniox(config)
-      const audioFile = new File(['mock audio data'], 'coffee_shop.mp3', { type: 'audio/mpeg' })
+      const audioBlob = new Blob(['mock audio data'], { type: 'audio/webm' })
 
       vi.mocked(global.fetch)
-        .mockResolvedValueOnce({ ok: true, json: async () => ({ id: 'file-123' }) } as Response) // File upload
         .mockResolvedValueOnce({ ok: true, json: async () => ({ id: 'trans-456' }) } as Response) // Create transcription
-        .mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'completed' }) } as Response) // Poll status
-        .mockResolvedValueOnce({ ok: true, json: async () => ({ text: 'Hello world' }) } as Response) // Get transcript
-        .mockResolvedValue({ ok: true } as Response) // Cleanup calls
+        .mockResolvedValueOnce({ ok: true, json: async () => ({}) } as Response) // Upload audio
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'completed', words: [{text: 'Hallo Welt'}] }) } as Response) // Poll status
 
-      await engine.transcribeFile(audioFile)
+      await engine.transcribeFile(audioBlob)
 
-      const fetchOptions = vi.mocked(global.fetch).mock.calls[1][1]
-      const body = JSON.parse(fetchOptions.body as string)
-      expect(body.language).toBe('de')
+      // Check create transcription call
+      const createFetchOpts = vi.mocked(global.fetch).mock.calls[0][1]
+      const createBody = JSON.parse(createFetchOpts.body as string)
+      expect(createBody.language).toBe('de')
+
+      // Check audio upload call
+      const uploadFetchOpts = vi.mocked(global.fetch).mock.calls[1][1]
+      expect(uploadFetchOpts.method).toBe('PUT')
+      expect(uploadFetchOpts.headers['Content-Type']).toBe('audio/webm')
+      expect(uploadFetchOpts.body).toBe(audioBlob)
     })
 
     it('should include custom vocabulary if provided', async () => {
@@ -81,34 +86,32 @@ describe('STTSoniox', () => {
         }
       })
       const engine = new STTSoniox(config)
-      const audioFile = new File(['mock audio data'], 'audio.mp3', { type: 'audio/mpeg' })
+      const audioBlob = new Blob(['mock audio data'], { type: 'audio/webm' })
 
       vi.mocked(global.fetch)
-        .mockResolvedValueOnce({ ok: true, json: async () => ({ id: 'file-123' }) } as Response)
         .mockResolvedValueOnce({ ok: true, json: async () => ({ id: 'trans-456' }) } as Response)
-        .mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'completed' }) } as Response)
-        .mockResolvedValueOnce({ ok: true, json: async () => ({ text: 'Hello Witsy and Soniox' }) } as Response)
-        .mockResolvedValue({ ok: true } as Response)
+        .mockResolvedValueOnce({ ok: true, json: async () => ({}) } as Response)
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'completed', words: [{text: 'Hallo Witsy'}] }) } as Response)
 
-      await engine.transcribeFile(audioFile)
+      await engine.transcribeFile(audioBlob)
 
-      const fetchOptions = vi.mocked(global.fetch).mock.calls[1][1]
-      const body = JSON.parse(fetchOptions.body as string)
-      expect(body.custom_vocabulary_phrases).toEqual(['Witsy', 'Soniox'])
+      const createFetchOpts = vi.mocked(global.fetch).mock.calls[0][1]
+      const createBody = JSON.parse(createFetchOpts.body as string)
+      expect(createBody.context.custom_vocabulary).toEqual([{ phrase: 'Witsy' }, { phrase: 'Soniox' }])
     })
 
     it('should throw an error if API key is missing', async () => {
       const config = makeConfig({ engines: { soniox: { apiKey: '' } } })
       const engine = new STTSoniox(config)
-      const audioFile = new File(['mock audio data'], 'audio.mp3', { type: 'audio/mpeg' })
+      const audioBlob = new Blob(['mock audio data'], { type: 'audio/webm' })
 
-      await expect(engine.transcribeFile(audioFile)).rejects.toThrow('Missing Soniox API key in settings')
+      await expect(engine.transcribeFile(audioBlob)).rejects.toThrow('Missing Soniox API key in settings')
     })
   })
 
   describe('streaming', () => {
     it('should connect and send configuration on startStreaming', async () => {
-      const config = makeConfig()
+      const config = makeConfig({stt: { locale: 'fr-FR' }})
       const engine = new STTSoniox(config)
       const callback = vi.fn()
 
@@ -117,8 +120,8 @@ describe('STTSoniox', () => {
       expect(mockWs.send).toHaveBeenCalledTimes(1)
       const configMsg = JSON.parse(mockWs.send.mock.calls[0][0])
       expect(configMsg.api_key).toBe('test-api-key')
-      expect(configMsg.language).toBe('en')
-      expect(configMsg.model).toBeUndefined()
+      expect(configMsg.model).toBe('fr_v2')
+      expect(configMsg.language).toBeUndefined()
       expect(callback).toHaveBeenCalledWith({ type: 'status', status: 'connected' })
     })
 
@@ -132,16 +135,12 @@ describe('STTSoniox', () => {
       expect(mockWs.onmessage).not.toBeNull()
 
       // Non-final token
-      mockWs.onmessage({ data: JSON.stringify({ tokens: [{ text: 'Hello ', is_final: false }] }) })
-      expect(callback).toHaveBeenLastCalledWith({ type: 'text', content: 'Hello ' })
+      mockWs.onmessage({ data: JSON.stringify({ tokens: [{ text: 'Hello' }], final_audio_proc_ms: 0 }) })
+      expect(callback).toHaveBeenLastCalledWith({ type: 'text', content: 'Hello', isFinal: false })
 
       // Final token
-      mockWs.onmessage({ data: JSON.stringify({ tokens: [{ text: 'world', is_final: true }] }) })
-      expect(callback).toHaveBeenLastCalledWith({ type: 'text', content: 'Hello world' })
-
-      // Mix of final and non-final
-      mockWs.onmessage({ data: JSON.stringify({ tokens: [{ text: '.', is_final: true }, {text: ' How', is_final: false}] }) })
-      expect(callback).toHaveBeenLastCalledWith({ type: 'text', content: 'Hello world. How' })
+      mockWs.onmessage({ data: JSON.stringify({ tokens: [{ text: 'Hello world' }], final_audio_proc_ms: 1000 }) })
+      expect(callback).toHaveBeenLastCalledWith({ type: 'text', content: 'Hello world', isFinal: true })
     })
 
     // Note: The following tests for sendAudioChunk and endStreaming are removed
