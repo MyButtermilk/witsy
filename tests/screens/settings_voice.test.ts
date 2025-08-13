@@ -97,6 +97,14 @@ test('stt settings', async () => {
   expect(store.config.stt.engine).toBe('whisper')
   expect(store.config.stt.model).toBe(whisper2.element.value)
 
+  // soniox
+  await stt.find('select[name=engine]').setValue('soniox')
+  expect(store.config.stt.engine).toBe('soniox')
+  expect(stt.find<HTMLSelectElement>('select[name=model]').element.value).toBe('stt-async-preview')
+  const soniox2 = stt.find('select[name=model]').findAll('option')[1]
+  await stt.find<HTMLSelectElement>('select[name=model]').setValue(soniox2.element.value)
+  expect(store.config.stt.model).toBe(soniox2.element.value)
+
   // custom
   await stt.find('select[name=engine]').setValue('custom')
   expect(stt.find<HTMLSelectElement>('select[name=model]').exists()).toBe(false)
