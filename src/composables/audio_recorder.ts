@@ -1,4 +1,5 @@
 import { type Configuration } from '../types/config'
+import fixWebmDuration from 'fix-webm-duration'
 
 export type AudioRecorderInitOptions = {
   listener: AudioRecorderListener
@@ -110,8 +111,25 @@ class AudioRecorder {
       }
     }
 
-    this.mediaRecorder.onstop = () => {
+    this.mediaRecorder.onstop = async () => {
       console.log('[audio] recording stopped')
+
+      if (!this.streamingMode && this.audioChunks.length) {
+        const rawBlob = new Blob(this.audioChunks, { type: this.mediaRecorder?.mimeType || 'audio/webm' })
+        if (rawBlob.type.includes('webm')) {
+          try {
+            const duration = new Date().getTime() - this.startRecordingTime
+            const fixedBlob = await fixWebmDuration(rawBlob, duration)
+            this.audioChunks = [fixedBlob]
+          } catch (err) {
+            console.error('Failed to fix WebM duration', err)
+            this.audioChunks = [rawBlob]
+          }
+        } else {
+          this.audioChunks = [rawBlob]
+        }
+      }
+
       this.listener.onRecordingComplete(this.audioChunks, this.lastNoise != null)
     }
 
